@@ -1,0 +1,23 @@
+{
+  "seed": 42,
+  "name": "Morning Gate Turnaround",
+  "world": { "width": 1000, "height": 620 },
+  "incidents": ["medical_emergency", "fuel_leak", "vehicle_breakdown", "vip_arrival"],
+  "demoIncident": "medical_emergency",
+  "vehicles": [
+    "fuel_1",
+    "baggage_1",
+    "catering_1",
+    "passenger_bus_1",
+    "pushback_1",
+    "maintenance_1",
+    "ambulance_1",
+    "security_1"
+  ],
+  "criticalZones": [
+    "service_lane_east",
+    "service_lane_north",
+    "taxiway_crossing_c",
+    "gate_alpha"
+  ]
+}

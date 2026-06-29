@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ground Coordination Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["incident", "priority_vehicle", "actions", "temporary_rules", "summary", "confidence"],
+  "properties": {
+    "incident": { "type": "string" },
+    "priority_vehicle": { "type": "string" },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["vehicle_id", "directive", "duration_ms", "waypoint", "zone", "target", "reason"],
+        "properties": {
+          "vehicle_id": { "type": "string" },
+          "directive": {
+            "type": "string",
+            "enum": [
+              "hold_position",
+              "reroute_via",
+              "yield_to",
+              "block_zone",
+              "priority_route",
+              "go_around",
+              "clear_land",
+              "cancel_takeoff",
+              "line_up_and_wait",
+              "expedite_crossing"
+            ]
+          },
+          "duration_ms": { "type": ["integer", "null"], "minimum": 0 },
+          "waypoint": { "type": ["string", "null"] },
+          "zone": { "type": ["string", "null"] },
+          "target": { "type": ["string", "null"] },
+          "reason": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "temporary_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["zone", "rule", "duration_ms"],
+        "properties": {
+          "zone": { "type": "string" },
+          "rule": {
+            "type": "string",
+            "enum": [
+              "emergency_only",
+              "medical_priority",
+              "safety_hold",
+              "no_fuel_traffic",
+              "blocked",
+              "vip_priority",
+              "sterile_corridor",
+              "hazmat_watch",
+              "runway_closed",
+              "crossing_lockout",
+              "arrival_priority",
+              "departure_hold"
+            ]
+          },
+          "duration_ms": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "summary": { "type": "string" },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+  }
+}
