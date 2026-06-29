@@ -58,16 +58,6 @@ already-open Intel-backed browser process.
 
 Copy `.env.example` to `.env` and add keys as needed.
 
-```bash
-CEREBRAS_API_KEY=
-CEREBRAS_BASE_URL=https://api.cerebras.ai/v1
-CEREBRAS_MODEL=gemma-4-31b
-
-BASELINE_API_KEY=
-BASELINE_BASE_URL=https://openrouter.ai/api/v1
-BASELINE_MODEL=google/gemma-4-31b-it
-```
-
 If no baseline key is configured, the app uses a configurable slow simulated baseline. If no Cerebras key is configured, the app uses a clearly labeled fast simulated coordinator so the local demo remains reproducible.
 
 ## Demo Mode
