@@ -29,6 +29,7 @@ TIMESTEP = 0.04
 
 WAYPOINTS: dict[str, tuple[float, float]] = {
     "fuel_farm": (-23.0, -11.2),
+    "ems_stand": (-24.2, -15.4),
     "cargo_ramp": (-23.0, 3.6),
     "catering_base": (-15.2, 10.6),
     "bus_stand": (-23.4, -4.2),
@@ -61,6 +62,74 @@ ZONES: dict[str, dict[str, float | str]] = {
     "runway_crossing_27": {"label": "Taxiway Delta crossing", "x": -4.8, "y": -29.6, "width": 5.6, "height": 11.0},
     "final_27": {"label": "Final approach 27", "x": -76.0, "y": -29.0, "width": 32.0, "height": 10.0},
     "departure_queue": {"label": "Departure queue", "x": 19.5, "y": -27.4, "width": 15.0, "height": 6.8},
+}
+
+LANE_WAYPOINTS = {
+    "service_lane_west",
+    "central_hub",
+    "taxiway_crossing_c",
+    "service_lane_east",
+    "service_lane_north",
+    "terminal_north",
+    "apron_hold",
+    "taxiway_delta_hold",
+    "runway_crossing_27",
+}
+
+CONFLICT_WAYPOINTS = {
+    "service_lane_west",
+    "central_hub",
+    "taxiway_crossing_c",
+    "service_lane_east",
+    "service_lane_north",
+    "gate_alpha",
+    "gate_alpha_medical",
+    "gate_bravo",
+    "apron_hold",
+    "taxiway_delta_hold",
+    "runway_crossing_27",
+}
+
+CONFLICT_GROUPS: tuple[frozenset[str], ...] = (
+    frozenset({"service_lane_west", "central_hub", "taxiway_crossing_c"}),
+    frozenset({"service_lane_east", "gate_alpha", "gate_alpha_medical", "apron_hold"}),
+    frozenset({"terminal_north", "service_lane_north", "gate_bravo"}),
+    frozenset({"taxiway_delta_hold", "runway_crossing_27"}),
+)
+
+LANE_OFFSETS_BY_KIND = {
+    "fuel": -0.82,
+    "baggage": 0.36,
+    "catering": -0.36,
+    "bus": 0.82,
+    "pushback": -0.24,
+    "maintenance": 0.24,
+    "ambulance": 1.0,
+    "security": -1.0,
+}
+
+PATH_GRAPH: dict[str, tuple[str, ...]] = {
+    "fuel_farm": ("service_lane_west",),
+    "ems_stand": ("service_lane_west",),
+    "bus_stand": ("service_lane_west",),
+    "cargo_ramp": ("central_hub", "terminal_north"),
+    "catering_base": ("terminal_north",),
+    "maintenance_bay": ("terminal_north",),
+    "service_lane_west": ("fuel_farm", "ems_stand", "bus_stand", "central_hub"),
+    "central_hub": ("service_lane_west", "cargo_ramp", "taxiway_crossing_c", "terminal_north"),
+    "taxiway_crossing_c": ("central_hub", "service_lane_east", "terminal_north", "taxiway_delta_hold"),
+    "service_lane_east": ("taxiway_crossing_c", "gate_alpha", "gate_bravo", "apron_hold", "service_lane_north"),
+    "service_lane_north": ("terminal_north", "gate_bravo", "service_lane_east", "security_post"),
+    "terminal_north": ("catering_base", "maintenance_bay", "service_lane_north", "central_hub", "taxiway_crossing_c", "cargo_ramp"),
+    "gate_alpha": ("service_lane_east", "gate_alpha_medical", "apron_hold"),
+    "gate_alpha_medical": ("gate_alpha", "service_lane_east"),
+    "gate_bravo": ("service_lane_east", "service_lane_north", "security_post"),
+    "apron_hold": ("service_lane_east", "gate_alpha", "pushback_stand"),
+    "pushback_stand": ("apron_hold",),
+    "security_post": ("service_lane_north", "gate_bravo",),
+    "taxiway_delta_hold": ("taxiway_crossing_c", "runway_crossing_27"),
+    "runway_crossing_27": ("taxiway_delta_hold", "tower"),
+    "tower": ("runway_crossing_27", "security_post"),
 }
 
 
@@ -155,12 +224,24 @@ class RuntimeMetrics:
     congestion_pressure: int = 0
     contact_count: int = 0
     kinetic_energy_j: float = 0
-    validity_window_ms: int = 1800
+    validity_window_ms: int = 3000
     validity_consumed_pct: int = 0
     challenge_load: int = 0
     runway_incursion_risk: int = 0
     aircraft_delay_ms: float = 0
     active_aircraft: int = 0
+
+
+@dataclass(frozen=True)
+class VehicleStepState:
+    x: float
+    y: float
+    yaw: float
+    target_name: str
+    target_x: float
+    target_y: float
+    distance: float
+    desired_yaw: float
 
 
 VEHICLES: tuple[VehicleConfig, ...] = (
@@ -170,7 +251,18 @@ VEHICLES: tuple[VehicleConfig, ...] = (
         kind="fuel",
         color=(0.96, 0.55, 0.13, 1),
         start="fuel_farm",
-        route=["service_lane_west", "central_hub", "taxiway_crossing_c", "service_lane_east", "gate_alpha", "fuel_farm"],
+        route=[
+            "service_lane_west",
+            "central_hub",
+            "taxiway_crossing_c",
+            "service_lane_east",
+            "gate_alpha",
+            "service_lane_east",
+            "taxiway_crossing_c",
+            "central_hub",
+            "service_lane_west",
+            "fuel_farm",
+        ],
         length=2.5,
         width=1.05,
         height=0.72,
@@ -187,7 +279,15 @@ VEHICLES: tuple[VehicleConfig, ...] = (
         kind="baggage",
         color=(0.28, 0.73, 1.0, 1),
         start="cargo_ramp",
-        route=["central_hub", "taxiway_crossing_c", "service_lane_east", "gate_bravo", "cargo_ramp"],
+        route=[
+            "central_hub",
+            "taxiway_crossing_c",
+            "service_lane_east",
+            "gate_bravo",
+            "service_lane_north",
+            "terminal_north",
+            "cargo_ramp",
+        ],
         length=1.9,
         width=0.92,
         height=0.55,
@@ -204,7 +304,14 @@ VEHICLES: tuple[VehicleConfig, ...] = (
         kind="catering",
         color=(0.54, 0.88, 0.36, 1),
         start="catering_base",
-        route=["terminal_north", "service_lane_north", "gate_bravo", "taxiway_crossing_c", "catering_base"],
+        route=[
+            "terminal_north",
+            "service_lane_north",
+            "gate_bravo",
+            "service_lane_north",
+            "terminal_north",
+            "catering_base",
+        ],
         length=2.2,
         width=1.0,
         height=0.85,
@@ -221,7 +328,18 @@ VEHICLES: tuple[VehicleConfig, ...] = (
         kind="bus",
         color=(0.92, 0.79, 0.31, 1),
         start="bus_stand",
-        route=["service_lane_west", "central_hub", "taxiway_crossing_c", "service_lane_east", "gate_alpha", "bus_stand"],
+        route=[
+            "service_lane_west",
+            "central_hub",
+            "taxiway_crossing_c",
+            "service_lane_east",
+            "gate_alpha",
+            "service_lane_east",
+            "taxiway_crossing_c",
+            "central_hub",
+            "service_lane_west",
+            "bus_stand",
+        ],
         length=3.3,
         width=1.2,
         height=1.0,
@@ -238,7 +356,7 @@ VEHICLES: tuple[VehicleConfig, ...] = (
         kind="pushback",
         color=(0.62, 0.52, 1.0, 1),
         start="pushback_stand",
-        route=["apron_hold", "gate_alpha", "pushback_stand"],
+        route=["apron_hold", "gate_alpha", "apron_hold", "pushback_stand"],
         length=1.75,
         width=1.0,
         height=0.58,
@@ -255,7 +373,7 @@ VEHICLES: tuple[VehicleConfig, ...] = (
         kind="maintenance",
         color=(1.0, 0.45, 0.24, 1),
         start="maintenance_bay",
-        route=["terminal_north", "service_lane_north", "gate_bravo", "taxiway_crossing_c", "maintenance_bay"],
+        route=[],
         length=2.05,
         width=0.96,
         height=0.72,
@@ -271,8 +389,8 @@ VEHICLES: tuple[VehicleConfig, ...] = (
         label="EMS",
         kind="ambulance",
         color=(1.0, 0.1, 0.16, 1),
-        start="service_lane_west",
-        route=["central_hub", "taxiway_crossing_c", "service_lane_east", "apron_hold", "service_lane_west"],
+        start="ems_stand",
+        route=[],
         length=2.3,
         width=1.02,
         height=0.86,
@@ -289,7 +407,7 @@ VEHICLES: tuple[VehicleConfig, ...] = (
         kind="security",
         color=(0.13, 0.88, 0.64, 1),
         start="security_post",
-        route=["gate_bravo", "service_lane_east", "taxiway_crossing_c", "terminal_north", "security_post"],
+        route=[],
         length=1.9,
         width=0.92,
         height=0.64,
@@ -321,24 +439,12 @@ AIRCRAFT: tuple[AircraftConfig, ...] = (
         callsign="NASA 503",
         model_key="g3",
         phase="departure",
-        x=27.0,
-        y=-17.4,
-        z=0.9,
+        x=35.0,
+        y=-24.0,
+        z=0.86,
         yaw=math.pi,
         speed_mps=0.0,
         priority=72,
-    ),
-    AircraftConfig(
-        id="medevac9",
-        callsign="MEDEVAC 9",
-        model_key="g3",
-        phase="missed_approach",
-        x=18.0,
-        y=-36.0,
-        z=5.2,
-        yaw=math.pi * 0.82,
-        speed_mps=4.4,
-        priority=88,
     ),
     AircraftConfig(
         id="cargo612",
@@ -376,12 +482,12 @@ def _make_model_xml() -> str:
               <joint name="{vehicle.id}_x" type="slide" axis="1 0 0" damping="2.5" limited="true" range="-60 60"/>
               <joint name="{vehicle.id}_y" type="slide" axis="0 1 0" damping="2.5" limited="true" range="-40 40"/>
               <joint name="{vehicle.id}_yaw" type="hinge" axis="0 0 1" damping="1.2" limited="false"/>
-              <geom name="{vehicle.id}_chassis" type="box" size="{vehicle.length / 2:.3f} {vehicle.width / 2:.3f} {vehicle.height / 2:.3f}" mass="{vehicle.mass_kg:.1f}" rgba="{_rgba(vehicle.color)}" friction="1.1 0.02 0.001"/>
+              <geom name="{vehicle.id}_chassis" type="box" size="{vehicle.length / 2:.3f} {vehicle.width / 2:.3f} {vehicle.height / 2:.3f}" mass="{vehicle.mass_kg:.1f}" rgba="{_rgba(vehicle.color)}" friction="1.1 0.02 0.001" contype="0" conaffinity="0"/>
               <geom name="{vehicle.id}_sensor" type="sphere" size="{max(vehicle.length, vehicle.width) * 0.72:.3f}" rgba="{vehicle.color[0]:.3f} {vehicle.color[1]:.3f} {vehicle.color[2]:.3f} 0.045" contype="0" conaffinity="0"/>
-              <geom name="{vehicle.id}_wheel_fl" type="cylinder" pos="{wheel_x:.3f} {wheel_y:.3f} {-vehicle.height / 2:.3f}" size="0.16 0.13" rgba="0.02 0.025 0.025 1"/>
-              <geom name="{vehicle.id}_wheel_fr" type="cylinder" pos="{wheel_x:.3f} {-wheel_y:.3f} {-vehicle.height / 2:.3f}" size="0.16 0.13" rgba="0.02 0.025 0.025 1"/>
-              <geom name="{vehicle.id}_wheel_rl" type="cylinder" pos="{-wheel_x:.3f} {wheel_y:.3f} {-vehicle.height / 2:.3f}" size="0.16 0.13" rgba="0.02 0.025 0.025 1"/>
-              <geom name="{vehicle.id}_wheel_rr" type="cylinder" pos="{-wheel_x:.3f} {-wheel_y:.3f} {-vehicle.height / 2:.3f}" size="0.16 0.13" rgba="0.02 0.025 0.025 1"/>
+              <geom name="{vehicle.id}_wheel_fl" type="cylinder" pos="{wheel_x:.3f} {wheel_y:.3f} {-vehicle.height / 2:.3f}" size="0.16 0.13" rgba="0.02 0.025 0.025 1" contype="0" conaffinity="0"/>
+              <geom name="{vehicle.id}_wheel_fr" type="cylinder" pos="{wheel_x:.3f} {-wheel_y:.3f} {-vehicle.height / 2:.3f}" size="0.16 0.13" rgba="0.02 0.025 0.025 1" contype="0" conaffinity="0"/>
+              <geom name="{vehicle.id}_wheel_rl" type="cylinder" pos="{-wheel_x:.3f} {wheel_y:.3f} {-vehicle.height / 2:.3f}" size="0.16 0.13" rgba="0.02 0.025 0.025 1" contype="0" conaffinity="0"/>
+              <geom name="{vehicle.id}_wheel_rr" type="cylinder" pos="{-wheel_x:.3f} {-wheel_y:.3f} {-vehicle.height / 2:.3f}" size="0.16 0.13" rgba="0.02 0.025 0.025 1" contype="0" conaffinity="0"/>
               <site name="{vehicle.id}_front" pos="{vehicle.length / 2:.3f} 0 0" size="0.08" rgba="1 1 1 0.8"/>
             </body>
             """
@@ -449,6 +555,37 @@ def _in_zone(x: float, y: float, zone_id: str) -> bool:
     )
 
 
+def _shortest_path(start: str, end: str) -> list[str]:
+    if start == end:
+        return [end]
+    if start not in WAYPOINTS or end not in WAYPOINTS:
+        return [end]
+
+    queue: list[tuple[str, list[str]]] = [(start, [start])]
+    visited = {start}
+    while queue:
+        node, path = queue.pop(0)
+        for neighbor in PATH_GRAPH.get(node, ()):
+            if neighbor in visited:
+                continue
+            next_path = [*path, neighbor]
+            if neighbor == end:
+                return next_path
+            visited.add(neighbor)
+            queue.append((neighbor, next_path))
+    return [end]
+
+
+def _path_through(start: str, via: str, end: str) -> list[str]:
+    first = _shortest_path(start, via)
+    second = _shortest_path(via, end)
+    return [*first, *second[1:]]
+
+
+def _same_conflict_group(first: str, second: str) -> bool:
+    return any(first in group and second in group for group in CONFLICT_GROUPS)
+
+
 class MuJoCoAirportSimulation:
     def __init__(self, pane: ProviderName, seed: int = 42):
         self.pane = pane
@@ -501,10 +638,16 @@ class MuJoCoAirportSimulation:
             ambulance = self.vehicles["ambulance_1"]
             ambulance.priority = 98
             ambulance.task = "Emergency response to Gate Alpha"
-            ambulance.route = ["central_hub", "taxiway_crossing_c", "service_lane_east", "gate_alpha_medical"]
+            ambulance.route = [
+                "service_lane_west",
+                "central_hub",
+                "taxiway_crossing_c",
+                "service_lane_east",
+                "gate_alpha",
+                "gate_alpha_medical",
+            ]
             ambulance.route_index = 0
             ambulance.status = "priority"
-            ambulance.config.max_speed
             self.last_policy_summary = "Medical incident detected; semantic coordinator pending"
         elif incident == "fuel_leak":
             self.priority_vehicle_id = "security_1"
@@ -520,9 +663,9 @@ class MuJoCoAirportSimulation:
             self.last_policy_summary = "Priority arrival changes gate sequencing"
         elif incident == "runway_incursion":
             self.priority_vehicle_id = "nasa742"
-            self.metrics.validity_window_ms = 1800
+            self.metrics.validity_window_ms = 3000
             self.vehicles["fuel_1"].held_until_ms = self.sim_time_ms + 3500
-            self.vehicles["security_1"].route = ["taxiway_delta_hold", "runway_crossing_27", "tower"]
+            self.vehicles["security_1"].route = ["taxiway_delta_hold", "runway_crossing_27", "taxiway_delta_hold"]
             self.vehicles["security_1"].route_index = 0
             self.vehicles["security_1"].priority = 86
             self.aircraft["nasa742"].phase = "approach"
@@ -540,13 +683,15 @@ class MuJoCoAirportSimulation:
             self.aircraft["cargo612"].status = "crossing active runway"
             self.aircraft["cargo612"].clearance = "taxi_crossing"
             self.aircraft["cargo612"].risk = 82
-            self.aircraft["gulf3"].status = "departure waiting"
-            self.aircraft["gulf3"].clearance = "line_up_pending"
-            self.aircraft["gulf3"].x = 27.0
-            self.aircraft["gulf3"].y = -17.4
-            self.aircraft["gulf3"].z = 0.9
+            self.aircraft["gulf3"].x = 35.0
+            self.aircraft["gulf3"].y = -24.0
+            self.aircraft["gulf3"].z = 0.86
+            self.aircraft["gulf3"].yaw = math.pi
             self.aircraft["gulf3"].phase = "departure"
+            self.aircraft["gulf3"].status = "departure held at runway 27"
+            self.aircraft["gulf3"].clearance = "line_up_pending"
             self.aircraft["gulf3"].speed_mps = 0.0
+            self.aircraft["gulf3"].hold_until_ms = self.sim_time_ms + 7600
             self.active_rules.extend(
                 [
                     RuntimeRule("runway_crossing_27", "incursion", self.sim_time_ms + 7200),
@@ -555,14 +700,21 @@ class MuJoCoAirportSimulation:
                 ]
             )
             self.last_policy_summary = (
-                "Runway incursion: short-final DC-8, active crossing traffic, departure queue, and fuel hazard conflict."
+                "Runway incursion: short-final DC-8, active crossing traffic, held departure, and fuel hazard conflict."
             )
         else:
             self.priority_vehicle_id = "ambulance_1"
             ambulance = self.vehicles["ambulance_1"]
             ambulance.priority = 99
             ambulance.task = "Life-safety response under compound apron constraints"
-            ambulance.route = ["central_hub", "service_lane_north", "gate_alpha_medical"]
+            ambulance.route = [
+                "service_lane_west",
+                "central_hub",
+                "taxiway_crossing_c",
+                "service_lane_east",
+                "gate_alpha",
+                "gate_alpha_medical",
+            ]
             ambulance.route_index = 0
             self.vehicles["fuel_1"].held_until_ms = self.sim_time_ms + 2200
             self.vehicles["pushback_1"].priority = 82
@@ -592,7 +744,13 @@ class MuJoCoAirportSimulation:
         )
         self.metrics.policy_staleness = min(
             100,
-            max(0, round(effective_policy_age_ms / 45 + self.metrics.congestion_pressure * 7)),
+            max(
+                0,
+                round(
+                    (effective_policy_age_ms / max(1, self.metrics.validity_window_ms)) * 42
+                    + self.metrics.congestion_pressure * 5
+                ),
+            ),
         )
         self.metrics.interventions += len(policy.actions)
         self.metrics.conflicts_avoided += max(1, round(len(policy.actions) * (1.4 if self.metrics.policy_staleness < 35 else 0.55)))
@@ -643,14 +801,16 @@ class MuJoCoAirportSimulation:
                 vehicle.status = "yielding"
                 vehicle.policy_until_ms = vehicle.yield_until_ms
             elif action.directive == "reroute_via" and action.waypoint in WAYPOINTS:
+                current_target = vehicle.route[vehicle.route_index] if vehicle.route else vehicle.config.start
                 final_target = vehicle.route[-1] if vehicle.route else vehicle.config.start
-                vehicle.route = [action.waypoint, final_target]
+                vehicle.route = _path_through(current_target, action.waypoint, final_target)
                 vehicle.route_index = 0
                 vehicle.status = "rerouting"
                 vehicle.policy_until_ms = self.sim_time_ms + (action.duration_ms or 6000)
             elif action.directive == "priority_route":
                 waypoint = action.waypoint if action.waypoint in WAYPOINTS else "gate_alpha_medical"
-                vehicle.route = [waypoint]
+                current_target = vehicle.route[vehicle.route_index] if vehicle.route else vehicle.config.start
+                vehicle.route = _shortest_path(current_target, waypoint)
                 vehicle.route_index = 0
                 vehicle.priority = max(vehicle.priority, 98)
                 vehicle.status = "priority"
@@ -760,82 +920,207 @@ class MuJoCoAirportSimulation:
             zones=ZONES,
         )
 
+    def _advance_vehicle_target(self, runtime: VehicleRuntime, current_x: float, current_y: float) -> tuple[str, float, float, float]:
+        if not runtime.route:
+            target_name = runtime.config.start
+            target_x, target_y = WAYPOINTS[target_name]
+            return target_name, target_x, target_y, math.hypot(target_x - current_x, target_y - current_y)
+
+        for _ in range(len(runtime.route) + 1):
+            target_name = runtime.route[runtime.route_index]
+            target_x, target_y = self._route_target_xy(runtime, target_name, current_x, current_y)
+            distance = math.hypot(target_x - current_x, target_y - current_y)
+            if distance >= max(0.72, runtime.config.length * 0.42):
+                return target_name, target_x, target_y, distance
+
+            runtime.last_reached_target = target_name
+            runtime.route_index += 1
+            if runtime.route_index >= len(runtime.route):
+                runtime.route_index = 0
+                runtime.completed_tasks += 1
+
+        target_name = runtime.route[runtime.route_index]
+        target_x, target_y = self._route_target_xy(runtime, target_name, current_x, current_y)
+        return target_name, target_x, target_y, math.hypot(target_x - current_x, target_y - current_y)
+
+    def _route_target_xy(
+        self,
+        runtime: VehicleRuntime,
+        target_name: str,
+        current_x: float,
+        current_y: float,
+    ) -> tuple[float, float]:
+        base_x, base_y = WAYPOINTS[target_name]
+        if target_name not in LANE_WAYPOINTS or not runtime.route:
+            return base_x, base_y
+
+        if runtime.route_index == 0:
+            previous_name = runtime.config.start
+        else:
+            previous_name = runtime.route[runtime.route_index - 1]
+        previous_x, previous_y = WAYPOINTS.get(previous_name, (current_x, current_y))
+        tangent_x = base_x - previous_x
+        tangent_y = base_y - previous_y
+
+        if math.hypot(tangent_x, tangent_y) < 0.01 and len(runtime.route) > 1:
+            next_name = runtime.route[(runtime.route_index + 1) % len(runtime.route)]
+            next_x, next_y = WAYPOINTS.get(next_name, (current_x, current_y))
+            tangent_x = next_x - base_x
+            tangent_y = next_y - base_y
+
+        tangent_length = math.hypot(tangent_x, tangent_y)
+        if tangent_length < 0.01:
+            return base_x, base_y
+
+        offset = LANE_OFFSETS_BY_KIND.get(runtime.config.kind, 0.0)
+        normal_x = -tangent_y / tangent_length
+        normal_y = tangent_x / tangent_length
+        return base_x + normal_x * offset, base_y + normal_y * offset
+
+    @staticmethod
+    def _should_yield_to(runtime: VehicleRuntime, other: VehicleRuntime) -> bool:
+        if runtime.priority != other.priority:
+            return runtime.priority < other.priority
+        return runtime.config.id > other.config.id
+
     def _control_step(self, dt: float) -> None:
         congestion = 0
         idle_this_step = 0.0
+        states: dict[str, VehicleStepState] = {}
 
         for runtime in self.vehicles.values():
-            runtime.status = "moving" if runtime.status not in ("priority", "rerouting") else runtime.status
-            qx, qy, qyaw = self._joint_address[runtime.config.id]
+            if runtime.status not in ("priority", "rerouting") or runtime.policy_until_ms <= self.sim_time_ms:
+                runtime.status = "moving"
+
+            _, _, qyaw = self._joint_address[runtime.config.id]
             current_x, current_y = self._position(runtime.config.id)
-            current_yaw = float(self.data.qpos[qyaw])
-            target_name = runtime.route[runtime.route_index] if runtime.route else runtime.config.start
-            target_x, target_y = WAYPOINTS[target_name]
-            dx = target_x - current_x
-            dy = target_y - current_y
-            distance = math.hypot(dx, dy)
+            current_yaw = _wrap_angle(float(self.data.qpos[qyaw]))
+            self.data.qpos[qyaw] = current_yaw
+            target_name, target_x, target_y, distance = self._advance_vehicle_target(runtime, current_x, current_y)
+            desired_yaw = math.atan2(target_y - current_y, target_x - current_x) if distance > 0.01 else current_yaw
+            states[runtime.config.id] = VehicleStepState(
+                x=current_x,
+                y=current_y,
+                yaw=current_yaw,
+                target_name=target_name,
+                target_x=target_x,
+                target_y=target_y,
+                distance=distance,
+                desired_yaw=desired_yaw,
+            )
 
-            if distance < max(0.55, runtime.config.length * 0.38):
-                runtime.last_reached_target = target_name
-                runtime.route_index += 1
-                if runtime.route_index >= len(runtime.route):
-                    runtime.route_index = 0
-                    runtime.completed_tasks += 1
-                target_name = runtime.route[runtime.route_index] if runtime.route else runtime.config.start
-                target_x, target_y = WAYPOINTS[target_name]
-                dx = target_x - current_x
-                dy = target_y - current_y
-                distance = math.hypot(dx, dy)
+        for runtime in self.vehicles.values():
+            qx, qy, qyaw = self._joint_address[runtime.config.id]
+            state = states[runtime.config.id]
+            current_x = state.x
+            current_y = state.y
+            current_yaw = state.yaw
+            target_name = state.target_name
+            target_x = state.target_x
+            target_y = state.target_y
+            distance = state.distance
+            desired_yaw = state.desired_yaw
 
-            desired_speed = runtime.config.max_speed * (1.12 if runtime.status == "priority" else 1.0)
-            if distance < 3.2:
-                desired_speed *= max(0.25, distance / 3.2)
+            is_priority = runtime.config.id == self.priority_vehicle_id or runtime.status == "priority"
+            desired_speed = runtime.config.max_speed * (1.22 if is_priority else 0.96)
+            if not runtime.route:
+                desired_speed = 0.0
+                runtime.status = "standby"
+            if distance < 3.8:
+                desired_speed *= max(0.18, distance / 3.8)
+
+            yaw_error = _wrap_angle(desired_yaw - current_yaw)
+            if abs(yaw_error) > 1.05:
+                desired_speed = min(desired_speed, runtime.config.max_speed * 0.34)
 
             if runtime.held_until_ms > self.sim_time_ms:
                 desired_speed = 0.0
                 runtime.status = "holding"
 
             if runtime.yield_until_ms > self.sim_time_ms and runtime.yield_target_id:
-                other = self.vehicles.get(runtime.yield_target_id)
-                if other:
-                    ox, oy = self._position(other.config.id)
-                    if math.hypot(current_x - ox, current_y - oy) < 7.5:
-                        desired_speed *= 0.12
-                        runtime.status = "yielding"
+                other_state = states.get(runtime.yield_target_id)
+                if other_state and math.hypot(current_x - other_state.x, current_y - other_state.y) < 8.5:
+                    desired_speed = min(desired_speed, runtime.config.max_speed * 0.1)
+                    runtime.status = "yielding"
 
             for rule in self.active_rules:
-                is_priority = runtime.config.id == self.priority_vehicle_id or runtime.config.kind == "ambulance"
-                if rule.rule in ("blocked", "emergency_only", "safety_hold") and not is_priority:
+                priority_vehicle = runtime.config.id == self.priority_vehicle_id or runtime.config.kind == "ambulance"
+                if rule.rule in ("blocked", "emergency_only", "safety_hold", "crossing_lockout") and not priority_vehicle:
                     if target_name == rule.zone or _in_zone(current_x, current_y, rule.zone) or _in_zone(target_x, target_y, rule.zone):
-                        desired_speed *= 0.0 if rule.rule in ("blocked", "safety_hold") else 0.18
+                        desired_speed = 0.0 if rule.rule in ("blocked", "safety_hold", "crossing_lockout") else min(desired_speed, runtime.config.max_speed * 0.15)
                         runtime.status = "blocked" if desired_speed < 0.1 else "holding"
+
+            dir_x = math.cos(desired_yaw)
+            dir_y = math.sin(desired_yaw)
 
             for other in self.vehicles.values():
                 if other.config.id == runtime.config.id:
                     continue
-                ox, oy = self._position(other.config.id)
-                separation = math.hypot(current_x - ox, current_y - oy)
-                safe_distance = max(1.8, (runtime.config.length + other.config.length) * 0.42)
-                if separation < safe_distance and runtime.priority <= other.priority:
-                    desired_speed *= 0.2
-                    runtime.status = "yielding"
+                other_state = states[other.config.id]
+                rel_x = other_state.x - current_x
+                rel_y = other_state.y - current_y
+                separation = math.hypot(rel_x, rel_y)
+                ahead = rel_x * dir_x + rel_y * dir_y
+                lateral = abs(rel_x * dir_y - rel_y * dir_x)
+                safe_distance = max(3.1, (runtime.config.length + other.config.length) * 0.66 + 0.7)
+                follow_distance = safe_distance + max(1.6, runtime.speed * 1.4)
+                same_direction = abs(_wrap_angle(desired_yaw - other_state.desired_yaw)) < 0.72
+                same_conflict_point = target_name == other_state.target_name and target_name not in LANE_WAYPOINTS
+                paired_conflict = _same_conflict_group(target_name, other_state.target_name)
+                should_yield = self._should_yield_to(runtime, other)
+                closing_head_on = ahead > 0 and abs(_wrap_angle(desired_yaw - other_state.desired_yaw)) > 2.15
+
+                if same_direction and 0 < ahead < follow_distance and lateral < max(1.1, (runtime.config.width + other.config.width) * 0.62):
+                    desired_speed = min(desired_speed, max(0.0, other.speed - 0.18))
+                    runtime.status = "spacing"
+                    congestion += 1
+                elif closing_head_on and separation < safe_distance * 2.2 and lateral < max(1.2, (runtime.config.width + other.config.width) * 0.72):
+                    if should_yield:
+                        desired_speed = 0.0
+                        runtime.status = "yielding"
+                    else:
+                        desired_speed = min(desired_speed, runtime.config.max_speed * 0.35)
+                        runtime.status = "spacing"
                     congestion += 1
 
-            accel_limit = runtime.config.max_accel * dt
+                if separation < safe_distance * 0.82:
+                    desired_speed = 0.0 if should_yield else min(desired_speed, runtime.config.max_speed * 0.16)
+                    runtime.status = "yielding" if should_yield else "spacing"
+                    congestion += 1
+                elif separation < safe_distance * 1.45 and should_yield:
+                    desired_speed = 0.0
+                    runtime.status = "yielding"
+                    congestion += 1
+                elif should_yield and same_conflict_point and state.distance < 16.0 and other_state.distance < 16.0:
+                    hold_speed = 0.0
+                    desired_speed = min(desired_speed, hold_speed)
+                    runtime.status = "yielding" if hold_speed == 0.0 else "spacing"
+                    congestion += 1
+                elif (
+                    should_yield
+                    and paired_conflict
+                    and state.distance < 7.5
+                    and other_state.distance < 7.5
+                    and separation < safe_distance * 1.75
+                ):
+                    hold_speed = 0.0 if state.distance > other_state.distance + 1.1 else runtime.config.max_speed * 0.22
+                    desired_speed = min(desired_speed, hold_speed)
+                    runtime.status = "yielding" if hold_speed == 0.0 else "spacing"
+                    congestion += 1
+
+            accel_limit = runtime.config.max_accel * dt * (3.4 if desired_speed < runtime.speed else 1.0)
             runtime.speed += float(np.clip(desired_speed - runtime.speed, -accel_limit, accel_limit))
             if runtime.speed < 0.05:
                 runtime.speed = 0.0
                 idle_this_step += dt * 1000
                 runtime.idle_ms += round(dt * 1000)
 
-            desired_yaw = math.atan2(dy, dx) if distance > 0.01 else current_yaw
-            yaw_error = _wrap_angle(desired_yaw - current_yaw)
             yaw_rate = float(np.clip(yaw_error / max(dt, 1e-3), -runtime.config.max_yaw_rate, runtime.config.max_yaw_rate))
-            speed_scale = max(0.15, 1.0 - min(abs(yaw_error), math.pi) / math.pi)
+            speed_scale = max(0.08, 1.0 - min(abs(yaw_error), math.pi) / (math.pi * 0.92))
             forward_speed = runtime.speed * speed_scale
 
-            self.data.qvel[qx] = math.cos(current_yaw) * forward_speed
-            self.data.qvel[qy] = math.sin(current_yaw) * forward_speed
+            self.data.qvel[qx] = math.cos(desired_yaw) * forward_speed
+            self.data.qvel[qy] = math.sin(desired_yaw) * forward_speed
             self.data.qvel[qyaw] = yaw_rate
 
             if (
@@ -845,12 +1130,12 @@ class MuJoCoAirportSimulation:
                 and self.metrics.emergency_response_ms is None
             ):
                 gx, gy = WAYPOINTS["gate_alpha_medical"]
-                if math.hypot(current_x - gx, current_y - gy) < 1.2:
+                if math.hypot(current_x - gx, current_y - gy) < 1.4:
                     self.metrics.emergency_response_ms = self.sim_time_ms - self.incident_started_at_ms
                     runtime.task = "Patient transfer established"
 
         self.metrics.vehicle_idle_ms += idle_this_step
-        self.metrics.turnaround_delay_ms += idle_this_step * 0.18
+        self.metrics.turnaround_delay_ms += idle_this_step * 0.14
         self.metrics.congestion_pressure = congestion
         if congestion >= 5:
             self.metrics.deadlock_duration_ms += dt * 1000
@@ -898,6 +1183,13 @@ class MuJoCoAirportSimulation:
                 if self.incident == "runway_incursion" and eta_ms is not None and eta_ms < 2600:
                     if self._runway_occupied() and aircraft.clearance != "go_around":
                         aircraft.risk = min(100, max(aircraft.risk, 86 + round((2600 - eta_ms) / 55)))
+                        if eta_ms < 620:
+                            aircraft.phase = "go_around"
+                            aircraft.status = "last-second missed approach"
+                            aircraft.clearance = "emergency_escape"
+                            aircraft.risk = 100
+                            aircraft.delay_ms += 4200
+                            continue
                     elif runway_locked:
                         aircraft.risk = max(aircraft.risk, 48)
 
@@ -997,7 +1289,7 @@ class MuJoCoAirportSimulation:
             id=runtime.config.id,
             label=runtime.config.label,
             kind=runtime.config.kind,
-            pose=Pose3D(x=float(xpos[0]), y=float(xpos[1]), z=float(xpos[2]), yaw=float(self.data.qpos[qyaw])),
+            pose=Pose3D(x=float(xpos[0]), y=float(xpos[1]), z=float(xpos[2]), yaw=_wrap_angle(float(self.data.qpos[qyaw]))),
             velocity=Vec3(x=float(xvel), y=float(yvel), z=0),
             speed=round(float(math.hypot(xvel, yvel)), 3),
             target=target,

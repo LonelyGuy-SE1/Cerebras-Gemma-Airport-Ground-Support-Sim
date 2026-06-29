@@ -22,7 +22,7 @@ Return only a high-level coordination policy as JSON. Do not compute raw geometr
 Use directives such as hold_position, reroute_via, yield_to, block_zone, priority_route, go_around,
 cancel_takeoff, expedite_crossing, line_up_and_wait, and clear_land.
 
-This is a reflex coordination task. Assume the policy validity window is about 1800 ms. If you over-block the
+This is a reflex coordination task. Assume the policy validity window is about 3000 ms. If you over-block the
 apron, throughput collapses; if you under-block, the ambulance or hazard perimeter conflicts with active traffic.
 For runway incursions, rank landing safety first, runway surface separation second, departure queue control third,
 and ground throughput last. For compound incidents, rank life-safety first, hazard isolation second, aircraft
@@ -52,7 +52,41 @@ def _chat_url(provider: ProviderSettings) -> str:
 
 
 def _compact_telemetry(telemetry: dict[str, Any]) -> str:
-    return json.dumps(telemetry, separators=(",", ":"), ensure_ascii=True)[:16000]
+    return json.dumps(telemetry, separators=(",", ":"), ensure_ascii=True)[:9000]
+
+
+def _cardinal_from_yaw(yaw: float) -> str:
+    degrees = (yaw * 180 / 3.141592653589793) % 360
+    names = ("east", "northeast", "north", "northwest", "west", "southwest", "south", "southeast")
+    return names[int((degrees + 22.5) // 45) % 8]
+
+
+def _traffic_vector_summary(telemetry: dict[str, Any]) -> str:
+    lines: list[str] = []
+    for aircraft in telemetry.get("aircraft", [])[:6]:
+        pose = aircraft.get("pose") or {}
+        yaw = float(pose.get("yaw") or 0)
+        lines.append(
+            "air "
+            f"{aircraft.get('id')} {aircraft.get('phase')} {aircraft.get('status')} "
+            f"pos=({float(pose.get('x') or 0):.1f},{float(pose.get('y') or 0):.1f},{float(pose.get('z') or 0):.1f}) "
+            f"heading={round((yaw * 180 / 3.141592653589793) % 360)}deg-{_cardinal_from_yaw(yaw)} "
+            f"speed={float(aircraft.get('speed') or 0):.1f} etaMs={aircraft.get('etaRunwayMs')} "
+            f"clearance={aircraft.get('clearance')} risk={aircraft.get('risk')}"
+        )
+    for vehicle in telemetry.get("vehicles", [])[:10]:
+        pose = vehicle.get("pose") or {}
+        yaw = float(pose.get("yaw") or 0)
+        route = vehicle.get("route") or []
+        lines.append(
+            "veh "
+            f"{vehicle.get('id')} {vehicle.get('kind')} {vehicle.get('status')} "
+            f"pos=({float(pose.get('x') or 0):.1f},{float(pose.get('y') or 0):.1f}) "
+            f"heading={round((yaw * 180 / 3.141592653589793) % 360)}deg-{_cardinal_from_yaw(yaw)} "
+            f"speed={float(vehicle.get('speed') or 0):.1f} target={vehicle.get('target')} "
+            f"route={'->'.join(str(item) for item in route[:4])}"
+        )
+    return "\n".join(lines)
 
 
 def _build_body(
@@ -69,6 +103,8 @@ def _build_body(
                 f"Scenario seed: {request.scenario_seed}\n"
                 "Decision challenge: choose a policy that remains valid within a short physical-world window. "
                 "Late or overbroad policies cause stale-conflict penalties in the MuJoCo twin.\n"
+                "Live traffic vectors with headings, direction, speed, targets, and clearances:\n"
+                f"{_traffic_vector_summary(request.telemetry)}\n"
                 "Telemetry JSON:\n"
                 f"{_compact_telemetry(request.telemetry)}"
             ),
@@ -83,8 +119,8 @@ def _build_body(
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": content},
         ],
-        "temperature": 0.1,
-        "max_tokens": 620,
+        "temperature": 0.0,
+        "max_tokens": 360,
         "reasoning_effort": "low",
     }
     if strict:

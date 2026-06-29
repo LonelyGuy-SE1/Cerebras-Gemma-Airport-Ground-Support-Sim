@@ -76,7 +76,15 @@ def get_settings() -> Settings:
         or "google/gemma-4-31b-it",
         simulated_delay_ms=_int_value(values, "BASELINE_SIMULATED_DELAY_MS", 2600),
     )
-    cors_raw = _first(values, "CORS_ORIGINS", default="http://localhost:5173,http://127.0.0.1:5173") or ""
+    cors_raw = _first(
+        values,
+        "CORS_ORIGINS",
+        default=(
+            "http://localhost:5173,http://127.0.0.1:5173,"
+            "http://localhost:5174,http://127.0.0.1:5174,"
+            "http://localhost:5175,http://127.0.0.1:5175"
+        ),
+    ) or ""
     return Settings(
         cerebras=cerebras,
         baseline=baseline,

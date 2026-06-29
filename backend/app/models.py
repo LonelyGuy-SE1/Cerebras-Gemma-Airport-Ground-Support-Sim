@@ -153,7 +153,7 @@ class PhysicsMetrics(BaseModel):
     congestion_pressure: int = Field(default=0, alias="congestionPressure")
     contact_count: int = Field(default=0, alias="contactCount")
     kinetic_energy_j: float = Field(default=0, alias="kineticEnergyJ")
-    validity_window_ms: int = Field(default=1800, alias="validityWindowMs")
+    validity_window_ms: int = Field(default=3000, alias="validityWindowMs")
     validity_consumed_pct: int = Field(default=0, alias="validityConsumedPct")
     challenge_load: int = Field(default=0, alias="challengeLoad")
     runway_incursion_risk: int = Field(default=0, alias="runwayIncursionRisk")

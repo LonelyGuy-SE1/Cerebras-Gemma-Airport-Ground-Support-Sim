@@ -80,10 +80,16 @@ function normalizeModel(source: THREE.Group, targetLength: number): THREE.Group 
   const wrapper = new THREE.Group();
   const model = source.clone(true);
   prepareModelObject(model);
-  const box = new THREE.Box3().setFromObject(model);
+  let box = new THREE.Box3().setFromObject(model);
   const size = new THREE.Vector3();
   const center = new THREE.Vector3();
   box.getSize(size);
+  if (size.z > size.x * 1.01) {
+    model.rotation.y = Math.PI / 2;
+    model.updateMatrixWorld(true);
+    box = new THREE.Box3().setFromObject(model);
+    box.getSize(size);
+  }
   box.getCenter(center);
   const longest = Math.max(size.x, size.y, size.z, 0.001);
   const scale = targetLength / longest;
@@ -116,6 +122,7 @@ class VehicleMesh {
   label: THREE.Sprite;
   trail: THREE.Line;
   trailPoints: THREE.Vector3[] = [];
+  private labelKey = "";
   private targetPosition = new THREE.Vector3();
   private targetYaw = 0;
   private initialized = false;
@@ -157,12 +164,13 @@ class VehicleMesh {
 
     this.label = new THREE.Sprite(
       new THREE.SpriteMaterial({
-        map: makeLabelTexture(vehicle.label, `#${color.toString(16).padStart(6, "0")}`, 236),
+        map: makeLabelTexture(`${vehicle.label} -> ${vehicle.target.replaceAll("_", " ")}`, `#${color.toString(16).padStart(6, "0")}`, 420),
         transparent: true,
         depthWrite: false,
       }),
     );
-    this.label.scale.set(2.5, 0.66, 1);
+    this.labelKey = `${vehicle.label}|${vehicle.target}|${vehicle.status}`;
+    this.label.scale.set(3.8, 0.72, 1);
     this.label.position.set(0, 1.75, 0);
     this.group.add(this.label);
 
@@ -174,7 +182,7 @@ class VehicleMesh {
 
   update(vehicle: PhysicsVehicle, priority: boolean): void {
     this.targetPosition.copy(worldPoint(vehicle.pose.x, vehicle.pose.y, vehicle.pose.z));
-    this.targetYaw = -vehicle.pose.yaw;
+    this.targetYaw = vehicle.pose.yaw;
     if (!this.initialized) {
       this.group.position.copy(this.targetPosition);
       this.group.rotation.y = this.targetYaw;
@@ -182,6 +190,18 @@ class VehicleMesh {
     }
     this.beacon.visible = priority || vehicle.status === "priority";
     this.beacon.scale.setScalar(priority ? 1.35 : 1.0);
+    const nextLabelKey = `${vehicle.label}|${vehicle.target}|${vehicle.status}`;
+    if (nextLabelKey !== this.labelKey) {
+      const labelMaterial = this.label.material as THREE.SpriteMaterial;
+      labelMaterial.map?.dispose();
+      labelMaterial.map = makeLabelTexture(
+        `${vehicle.label} -> ${vehicle.target.replaceAll("_", " ")}  ${vehicle.status}`,
+        `#${(VEHICLE_COLORS[vehicle.kind] ?? 0xffffff).toString(16).padStart(6, "0")}`,
+        520,
+      );
+      labelMaterial.needsUpdate = true;
+      this.labelKey = nextLabelKey;
+    }
 
     const trailPoint = worldPoint(vehicle.pose.x, vehicle.pose.y, 0.08);
     const previous = this.trailPoints.at(-1);
@@ -261,7 +281,7 @@ class AircraftMesh {
   update(aircraft: PhysicsAircraft, modelTemplate: THREE.Group | undefined): void {
     if (!this.hasModel && modelTemplate) this.setModel(modelTemplate);
     this.targetPosition.copy(worldPoint(aircraft.pose.x, aircraft.pose.y, aircraft.pose.z));
-    this.targetYaw = -aircraft.pose.yaw;
+    this.targetYaw = aircraft.pose.yaw;
     this.targetScale = aircraft.phase === "approach" || aircraft.phase === "go_around" ? 1.0 : 0.78;
     if (!this.initialized) {
       this.group.position.copy(this.targetPosition);
@@ -487,9 +507,9 @@ export class AirportScene {
 
   capture(): string {
     const source = this.renderer.domElement;
-    const maxWidth = 640;
+    const maxWidth = 360;
     const scale = Math.min(1, maxWidth / source.width);
-    if (scale >= 1) return source.toDataURL("image/jpeg", 0.72);
+    if (scale >= 1) return source.toDataURL("image/jpeg", 0.54);
 
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(source.width * scale));
@@ -497,7 +517,7 @@ export class AirportScene {
     const context = canvas.getContext("2d");
     if (!context) return source.toDataURL("image/jpeg", 0.72);
     context.drawImage(source, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", 0.72);
+    return canvas.toDataURL("image/jpeg", 0.54);
   }
 
   dispose(): void {

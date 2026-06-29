@@ -20,9 +20,9 @@ const INCIDENT_OPTIONS: Array<{ value: IncidentType; label: string }> = [
 
 const CHALLENGE_BRIEF: Record<IncidentType, { primary: string; constraints: string[]; window: string }> = {
   runway_incursion: {
-    primary: "DC-8 short final, runway crossing traffic, departure queue, and fuel hazard collide",
+    primary: "DC-8 short final, runway crossing traffic, held departure, and fuel hazard collide",
     constraints: ["go-around decision", "crossing lockout", "departure hold", "fuel freeze"],
-    window: "1800ms ATC reflex window",
+    window: "3000ms ATC reflex window",
   },
   compound_incursion: {
     primary: "Ambulance to Gate Alpha while fuel, VIP, and crossing constraints collide",
@@ -51,6 +51,15 @@ const CHALLENGE_BRIEF: Record<IncidentType, { primary: string; constraints: stri
   },
 };
 
+const GROUND_MISSIONS = [
+  { id: "Fuel", goal: "Fuel farm -> Gate Alpha", rule: "Freeze under fuel hazard" },
+  { id: "Bags", goal: "Cargo ramp -> Gate Bravo", rule: "Yield at Crossing C" },
+  { id: "Catering", goal: "Catering base -> Gate Bravo", rule: "Use north lane" },
+  { id: "Bus", goal: "Bus stand -> Gate Alpha", rule: "Hold for runway emergency" },
+  { id: "Pushback", goal: "Tow stand -> apron hold", rule: "Stay clear of sterile runway" },
+  { id: "Security", goal: "Delta crossing lockout", rule: "Activate on incursion" },
+];
+
 function providerText(health: HealthResponse | null, provider: PaneKind, liveProviders: boolean): string {
   if (!liveProviders) return "forced sim";
   const data = health?.providers[provider];
@@ -63,14 +72,62 @@ function mergeSnapshot(current: PhysicsSnapshots | null, pane: PaneKind, snapsho
   return { ...current, [pane]: snapshot };
 }
 
+function formatMetricMs(ms: number | null | undefined): string {
+  if (!ms) return "--";
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+}
+
+function demoNarration(stage: string, snapshots: PhysicsSnapshots | null, pending: Record<PaneKind, boolean>) {
+  const baseline = snapshots?.baseline;
+  const cerebras = snapshots?.cerebras;
+  const baselineLatency = baseline?.metrics.llmLatencyMs ?? 0;
+  const cerebrasLatency = cerebras?.metrics.llmLatencyMs ?? 0;
+  const hasPolicy = baselineLatency > 0 || cerebrasLatency > 0;
+  const latencyGap = baselineLatency && cerebrasLatency ? Math.max(0, baselineLatency - cerebrasLatency) : 0;
+
+  if (pending.baseline || pending.cerebras) {
+    return {
+      headline: "Same runway picture, same telemetry, two coordinators racing the physics clock.",
+      detail: "Gemma receives live headings, speeds, targets, clearances, and the rendered frame.",
+      left: pending.baseline ? "Baseline: still thinking" : `Baseline: ${formatMetricMs(baselineLatency)}`,
+      right: pending.cerebras ? "Cerebras: reflex policy pending" : `Cerebras: ${formatMetricMs(cerebrasLatency)}`,
+    };
+  }
+
+  if (hasPolicy) {
+    return {
+      headline: "Cerebras returns while the scene is still current; the slow lane becomes stale.",
+      detail: `Gap ${formatMetricMs(latencyGap)}. Cerebras window ${cerebras?.metrics.validityConsumedPct ?? 0}%, runway risk ${cerebras?.metrics.runwayIncursionRisk ?? 0}%.`,
+      left: `Baseline stale ${baseline?.metrics.policyStaleness ?? 0}% / risk ${baseline?.metrics.runwayIncursionRisk ?? 0}%`,
+      right: `Cerebras stale ${cerebras?.metrics.policyStaleness ?? 0}% / risk ${cerebras?.metrics.runwayIncursionRisk ?? 0}%`,
+    };
+  }
+
+  if (stage.toLowerCase().includes("runway")) {
+    return {
+      headline: "Runway incursion injected: land, cross, depart, and ground services now conflict.",
+      detail: "The local planners keep lanes moving; Gemma only issues high-level ATC and ground priorities.",
+      left: "Baseline will apply a late policy",
+      right: "Cerebras should lock the runway fast",
+    };
+  }
+
+  return {
+    headline: "Nominal airport ground ops: every vehicle has a route and a job.",
+    detail: "Fuel, bags, catering, bus, pushback, and security follow service lanes until a semantic incident changes priorities.",
+    left: "Left twin: slow coordinator",
+    right: "Right twin: Cerebras Gemma 4",
+  };
+}
+
 export function App() {
   const baselineRef = useRef<PhysicsPaneHandle | null>(null);
   const cerebrasRef = useRef<PhysicsPaneHandle | null>(null);
   const timersRef = useRef<number[]>([]);
   const steppingRef = useRef(false);
-  const scriptedAdvanceRef = useRef(false);
   const lastStepAtRef = useRef(performance.now());
   const snapshotsRef = useRef<PhysicsSnapshots | null>(null);
+  const pendingRef = useRef<Record<PaneKind, boolean>>({ baseline: false, cerebras: false });
   const [snapshots, setSnapshots] = useState<PhysicsSnapshots | null>(null);
   const [pending, setPending] = useState<Record<PaneKind, boolean>>({ baseline: false, cerebras: false });
   const [running, setRunning] = useState(true);
@@ -112,7 +169,7 @@ export function App() {
     let cancelled = false;
 
     const tick = async () => {
-      if (!cancelled && !steppingRef.current && !scriptedAdvanceRef.current) {
+      if (!cancelled && !steppingRef.current) {
         const now = performance.now();
         const dtMs = Math.max(120, Math.min(360, Math.round(now - lastStepAtRef.current)));
         lastStepAtRef.current = now;
@@ -155,6 +212,7 @@ export function App() {
     setDemoActive(false);
     setFinalCard(false);
     setStage("Resetting MuJoCo");
+    pendingRef.current = { baseline: false, cerebras: false };
     setPending({ baseline: false, cerebras: false });
     resetPhysics(SEED)
       .then((next) => {
@@ -173,11 +231,16 @@ export function App() {
 
   const requestPanePolicy = useCallback(
     async (provider: PaneKind, incident: IncidentType) => {
+      if (pendingRef.current[provider]) {
+        pushEvent(`${provider} replan skipped; request already pending`);
+        return;
+      }
       const current = snapshotsRef.current?.[provider];
       if (!current) return;
       const pane = provider === "baseline" ? baselineRef.current : cerebrasRef.current;
       const frameDataUrl = pane?.captureFrame() ?? null;
       const requestedAtSimMs = current.simTimeMs;
+      pendingRef.current = { ...pendingRef.current, [provider]: true };
       setPending((value) => ({ ...value, [provider]: true }));
       pushEvent(`${provider} request sent at T+${(requestedAtSimMs / 1000).toFixed(1)}s`);
 
@@ -204,28 +267,11 @@ export function App() {
       } catch (error) {
         pushEvent(`${provider} coordinator error: ${String(error).slice(0, 92)}`);
       } finally {
+        pendingRef.current = { ...pendingRef.current, [provider]: false };
         setPending((value) => ({ ...value, [provider]: false }));
       }
     },
     [liveProviders, pushEvent],
-  );
-
-  const advancePhysicsTo = useCallback(
-    async (targetSimMs: number): Promise<PhysicsSnapshots | null> => {
-      const currentSimMs = snapshotsRef.current?.baseline.simTimeMs ?? 0;
-      const dtMs = Math.max(0, targetSimMs - currentSimMs);
-      if (dtMs < 10) return snapshotsRef.current;
-      scriptedAdvanceRef.current = true;
-      try {
-        const next = await stepPhysics(dtMs, true);
-        snapshotsRef.current = next;
-        setSnapshots(next);
-        return next;
-      } finally {
-        scriptedAdvanceRef.current = false;
-      }
-    },
-    [],
   );
 
   const triggerIncident = useCallback(() => {
@@ -245,6 +291,7 @@ export function App() {
 
   const runDemo = useCallback(() => {
     clearTimers();
+    pendingRef.current = { baseline: false, cerebras: false };
     setPending({ baseline: false, cerebras: false });
     setFinalCard(false);
     setDemoActive(true);
@@ -252,7 +299,6 @@ export function App() {
     pushEvent("60s MuJoCo demo armed");
     resetPhysics(SEED)
       .then((next) => {
-        let incidentReady: Promise<void> = Promise.resolve();
         snapshotsRef.current = next;
         setSnapshots(next);
         setRunning(true);
@@ -260,27 +306,31 @@ export function App() {
         pushEvent("60s MuJoCo demo started");
         schedule(() => setStage("Physics twin running"), 1200);
         schedule(() => {
-          incidentReady = advancePhysicsTo(5200)
-            .then(() => triggerPhysicsIncident(DEMO_INCIDENT))
+          triggerPhysicsIncident(DEMO_INCIDENT)
             .then((incidentSnapshots) => {
               snapshotsRef.current = incidentSnapshots;
               setSnapshots(incidentSnapshots);
-          setStage("Runway incursion");
-          pushEvent("Runway incursion injected into both twins");
+              setStage("Runway incursion");
+              pushEvent("Runway incursion injected into both twins");
             })
             .catch((error: unknown) => pushEvent(`Incident failed: ${String(error).slice(0, 92)}`));
         }, 5200);
         schedule(() => {
           setStage("Frame and telemetry captured");
-          incidentReady
-            .then(() => advancePhysicsTo(5900))
-            .then(() => {
-              void requestPanePolicy("baseline", DEMO_INCIDENT);
-              void requestPanePolicy("cerebras", DEMO_INCIDENT);
-            })
-            .catch((error: unknown) => pushEvent(`Demo advance failed: ${String(error).slice(0, 92)}`));
+          void requestPanePolicy("baseline", DEMO_INCIDENT);
+          void requestPanePolicy("cerebras", DEMO_INCIDENT);
         }, 5900);
+        schedule(() => {
+          setStage("Cerebras rapid replan");
+          pushEvent("Cerebras Gemma replan pulse 2");
+          void requestPanePolicy("cerebras", DEMO_INCIDENT);
+        }, 8800);
         schedule(() => setStage("Policy contrast forming"), 12000);
+        schedule(() => {
+          setStage("Cerebras runway monitor");
+          pushEvent("Cerebras Gemma replan pulse 3");
+          void requestPanePolicy("cerebras", DEMO_INCIDENT);
+        }, 14200);
         schedule(() => setStage("Physical metrics locked"), 34000);
         schedule(() => {
           setFinalCard(true);
@@ -288,13 +338,14 @@ export function App() {
         }, DEMO_FINAL_CARD_MS);
       })
       .catch((error: unknown) => pushEvent(`Demo reset failed: ${String(error).slice(0, 92)}`));
-  }, [advancePhysicsTo, clearTimers, pushEvent, requestPanePolicy, schedule]);
+  }, [clearTimers, pushEvent, requestPanePolicy, schedule]);
 
   const baselineLatency = snapshots?.baseline.metrics.llmLatencyMs ?? 0;
   const cerebrasLatency = snapshots?.cerebras.metrics.llmLatencyMs ?? 0;
   const baselineMetrics = snapshots?.baseline.metrics;
   const cerebrasMetrics = snapshots?.cerebras.metrics;
   const delta = baselineLatency && cerebrasLatency ? Math.max(0, baselineLatency - cerebrasLatency) : 0;
+  const narration = demoNarration(stage, snapshots, pending);
 
   return (
     <main className="app-shell">
@@ -379,6 +430,28 @@ export function App() {
         </div>
       </section>
 
+      <section className="demo-caption" aria-live="polite">
+        <div>
+          <span>Demo subtitle</span>
+          <strong>{narration.headline}</strong>
+          <p>{narration.detail}</p>
+        </div>
+        <aside>
+          <b>{narration.left}</b>
+          <b>{narration.right}</b>
+        </aside>
+      </section>
+
+      <section className="mission-strip" aria-label="Ground vehicle missions">
+        {GROUND_MISSIONS.map((mission) => (
+          <article key={mission.id}>
+            <span>{mission.id}</span>
+            <strong>{mission.goal}</strong>
+            <small>{mission.rule}</small>
+          </article>
+        ))}
+      </section>
+
       <section className="simulation-grid">
         <PhysicsPane
           ref={baselineRef}
@@ -399,8 +472,8 @@ export function App() {
       </section>
 
       <aside className="event-strip">
-        {events.map((event) => (
-          <span key={event}>{event}</span>
+        {events.map((event, index) => (
+          <span key={`${index}-${event}`}>{event}</span>
         ))}
       </aside>
 

@@ -1,13 +1,13 @@
 # 60-Second Recording Script
 
-0-5s: Open the app and show both MuJoCo twins initialized from the same seeded runway/apron model with NASA aircraft visible.
+0-5s: "Both panes start from the same seeded airport state. Every ground vehicle has a mission: fuel, bags, catering, bus, pushback, and security."
 
-5-10s: Click **Run 60s Demo**. Ground vehicles and aircraft begin moving in the 3D runway scene.
+5-10s: Click **Run 60s Demo**. "A runway incursion hits: a DC-8 is short final, a cargo aircraft is crossing the active runway, and a departure aircraft is held at runway 27."
 
-10-20s: The runway incursion triggers: DC-8 short final, crossing traffic on the active runway, G-III departure queue, and fuel hazard pressure. Both panes capture a rendered WebGL frame and MuJoCo telemetry while the world continues moving.
+10-20s: "Both coordinators receive the same rendered frame plus live vectors: heading, speed, target, clearance, and risk. The world keeps moving while they think."
 
-20-35s: The right pane receives the fast coordination policy, issues the go-around, locks the crossing, holds the departure queue, and freezes fuel traffic. The left pane applies a stale policy and shows elevated runway risk, policy staleness, and deadlock duration.
+20-35s: "Cerebras Gemma returns first. It issues go-around, crossing lockout, departure hold, and fuel freeze while the policy is still synchronized with the scene."
 
-35-50s: Show live metrics: latency, policy staleness, runway risk, aircraft delay, conflicts avoided, deadlock duration, and challenge load.
+35-50s: "The slow baseline applies late. The runway state has already changed, so its policy consumes more of the validity window and scores higher runway risk."
 
-50-60s: End on the reflex-window result card showing the latency gap, validity-window consumption, runway risk, and aircraft delay.
+50-60s: "The comparison is the product: fast inference keeps semantic coordination connected to physical reality."
