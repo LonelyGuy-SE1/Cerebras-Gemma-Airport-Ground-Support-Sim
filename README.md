@@ -2,6 +2,8 @@
 
 Sub-second AI coordination for runway incursions and autonomous airport operations.
 
+<img width="1850" height="1080" alt="image" src="https://github.com/user-attachments/assets/5e467c5a-90af-49a1-84d5-9bb1a78bfb59" />
+
 Airport Ground Support Simulator is a local web simulation of airport runway and apron operations. A MuJoCo physics twin models ground vehicles, planar joints, masses, contact geometry, deterministic route controllers, and a live aircraft-state layer for short-final, departure, missed-approach, and runway-crossing traffic. A multimodal coordination model intervenes during semantic disruptions such as runway incursions, medical emergencies, fuel leaks, lane blockages, and priority arrivals.
 
 The app demonstrates why response latency matters in physical operations: both panes start from the same seeded scenario, but the slow baseline may return a coordination policy after the airport state has already changed. The fast coordinator can apply a policy while it is still synchronized with the world.
@@ -39,9 +41,6 @@ npm run dev
 ```
 
 Open `http://localhost:5173`.
-
-On hybrid Intel/NVIDIA laptops, launch the browser with PRIME offload so the
-Three.js runway scene uses the dGPU:
 
 ```bash
 cd frontend
